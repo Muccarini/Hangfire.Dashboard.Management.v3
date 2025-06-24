@@ -38,10 +38,8 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 			{
 				var input = string.Empty;
 
-				if (parameterInfo.ParameterType == typeof(PerformContext) || parameterInfo.ParameterType == typeof(IJobCancellationToken))
-				{
-					continue;
-				}
+				if (parameterInfo.ParameterType == typeof(PerformContext)) { continue; }
+				if (parameterInfo.ParameterType == typeof(IJobCancellationToken)) { continue; }
 
 				DisplayDataAttribute displayInfo = parameterInfo.GetCustomAttribute<DisplayDataAttribute>();
 
@@ -64,11 +62,24 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 					labelText = rootType.Name + " (Element)";
 				}
 
+				if(rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>))
+				{
+					var elementType = rootType.GetGenericArguments().ToList().FirstOrDefault();
+					rootType = elementType;
+					labelText = isList ? rootType.Name + " (Element)" : labelText;
+				}
+
 				if (rootType.IsInterface)
 				{
-					if (!VT.Implementations.ContainsKey(rootType)) { inputs += $"<span>No concrete implementation of \"{rootType}\" found in the current assembly.</span>"; continue; }
+					if (!VT.Implementations.ContainsKey(rootType)) { inputs += $"<span>No concrete implementation of \"{rootType.Name}\" found in the current assembly.</span>"; continue; }
 
 					var impls = VT.Implementations[rootType];
+
+					if (impls == null || impls.Count == 0)
+					{
+						input += $"<span>No concrete implementation of \"{rootType.Name}\" found in the current assembly.</span>";
+						continue;
+					}
 
 					if (impls.Count == 1)
 					{
@@ -81,16 +92,22 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 					}
 					else
 					{
-						string defaultValue = displayInfo.DefaultValue?.ToString();
+						Type defaultValue = displayInfo.DefaultValue as Type;
+
+						if (defaultValue != null && !rootType.IsAssignableFrom(defaultValue))
+						{
+							input += $"<span>Default type \"{defaultValue.Name}\" does not implement interface \"{rootType.Name}\".</span>";
+							continue;
+						}
 
 						//drop down menu for multiple implementations
-						input += InputImplsList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, impls, defaultValue, displayInfo.IsDisabled);
+						input += InputImplsList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, impls, defaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
 
 						//not showing implementations
 						foreach (Type impl in impls)
 						{
 							NestedTypes.Add(impl);
-							string dNone = defaultValue != null && impl.Name == defaultValue ? "" : "d-none";
+							string dNone = defaultValue != null && impl == defaultValue ? "" : "d-none";
 
 							input += $"<div id=\"{myId}_{impl.Name}\" class=\"panel panel-default impl-panels-for-{myId} {dNone}\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{impl.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{impl.Name}\"><h4 class=\"panel-title\">{impl.Name} {parameterInfo.Name}</h4></div><div id=\"collapse_{myId}_{impl.Name}\" 	class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
 							input += InputProps($"{myId}_{impl.Name}", impl, outerDepth);
@@ -103,7 +120,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 				{
 					input += InputTextbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired, displayInfo.IsMultiLine);
 				}
-				else if (rootType == typeof(int))
+				else if (rootType == typeof(int) || rootType == typeof(int?))
 				{
 					input += InputNumberbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
 				}
@@ -111,7 +128,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 				{
 					input += Input(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, "url", displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired);
 				}
-				else if (rootType == typeof(DateTime))
+				else if (rootType == typeof(DateTime) || rootType == typeof(DateTime?))
 				{
 					input += InputDatebox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled, displayInfo.IsRequired, displayInfo.ControlConfiguration);
 				}
@@ -119,13 +136,15 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 				{
 					input += "<br/>" + InputCheckbox(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, displayInfo.DefaultValue, displayInfo.IsDisabled);
 				}
-				else if (rootType.IsEnum)
+				else if (rootType.IsEnum || (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum))
 				{
-					var data = new Dictionary<string, string>();
-					foreach (int v in Enum.GetValues(rootType))
+					var data = new Dictionary<string, int>();
+					foreach (var name in Enum.GetNames(rootType))
 					{
-						data.Add(Enum.GetName(rootType, v), v.ToString());
+						var value = (int)Enum.Parse(rootType, name);
+						data.Add(name, value);
 					}
+
 					input += InputDataList(myId, displayInfo.CssClasses, labelText, placeholderText, displayInfo.Description, data, displayInfo.DefaultValue?.ToString(), displayInfo.IsDisabled);
 				}
 				else if (rootType.IsClass)
@@ -212,16 +231,29 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 					labelText = rootType.Name + " (Element)";
 				}
 
+				if (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>))
+				{
+					var elementType = rootType.GetGenericArguments().ToList().FirstOrDefault();
+					rootType = elementType;
+					labelText = isList ? rootType.Name + " (Element)" : labelText;
+				}
+
 				if (rootType.IsInterface)
 				{
 					if (!VT.Implementations.ContainsKey(rootType)) { input += $"<span>No concrete implementation of \"{rootType}\" found in the current assembly.</span>"; continue; }
 
 					var impls = VT.Implementations[rootType];
 
+					if (impls == null || impls.Count == 0)
+					{
+						input += $"<span>No concrete implementation of \"{rootType.Name}\" found in the current assembly.</span>";
+						continue;
+					}
+
 					if (impls.Count == 1)
 					{
 						var implType = impls.First();
-						NestedTypes.Add(implType);
+						if (!NestedTypes.Add(implType)) { input += "<span>Circular reference detected, not allowed.</span>"; continue; }
 						input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{implType.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{implType.Name}\"><h4 class=\"panel-title\">{implType.Name}</h4></div><div id=\"collapse_{myId}_{implType.Name}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
 						input += InputProps($"{myId}_{implType.Name}", implType, innerDepth);
 						input += "</div></div></div>";
@@ -230,17 +262,37 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 					else
 					{
 						var filteredImpls = new HashSet<Type>(impls.Where(impl => !NestedTypes.Contains(impl)));
-						string defaultValue = propDisplayInfo.DefaultValue?.ToString();
+
+						Type defaultValue = propDisplayInfo.DefaultValue as Type;
+
+						if (defaultValue != null)
+						{
+							if (!rootType.IsAssignableFrom(defaultValue))
+							{
+								input += $"<span>Default type \"{defaultValue.Name}\" does not implement interface \"{rootType.Name}\".</span>";
+								
+								continue;
+							}
+							if (!impls.Contains(defaultValue))
+							{
+								input += $"<span>Default type \"{defaultValue.Name}\" is not in the list of implementations.</span>";
+								continue;
+							}
+							if (!filteredImpls.Contains(defaultValue))
+							{
+								input += $"<span>Default type \"{defaultValue.Name}\" creates a circular reference and is not allowed.</span>";
+								continue;
+							}
+						}
 
 						//drop down menu
-						input += InputImplsList(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, filteredImpls, defaultValue, propDisplayInfo.IsDisabled);
+						input += InputImplsList(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, filteredImpls, defaultValue, propDisplayInfo.IsDisabled, propDisplayInfo.IsRequired);
 
 						//implementations
 						foreach (Type impl in impls)
 						{
-							string dNone = defaultValue != null && impl.Name == defaultValue ? "" : "d-none";
-
-							if (!NestedTypes.Add(impl)) { input += null; continue; } //Circular reference, not allowed -> null
+							if (!NestedTypes.Add(impl)) { continue; }
+							string dNone = defaultValue != null && impl == defaultValue ? "" : "d-none";
 							input += $"<div id=\"{myId}_{impl.Name}\" class=\"panel panel-default impl-panels-for-{myId} {dNone}\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}_{impl.Name}\" aria-expanded=\"false\" 	aria-controls=\"collapse_{myId}_{impl.Name}\"><h4 class=\"panel-title\">{impl.Name} {propertyInfo.Name}</h4></div><div id=\"collapse_{myId}_{impl.Name}\" 	class=\"panel-collapse collapse\"><div 	class=\"panel-body\">";
 							input += InputProps($"{myId}_{impl.Name}", impl, innerDepth);
 							input += "</div></div></div>";
@@ -270,16 +322,18 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 				}
 				else if (rootType.IsEnum)
 				{
-					var data = new Dictionary<string, string>();
-					foreach (int v in Enum.GetValues(rootType))
+					var data = new Dictionary<string, int>();
+					foreach (var name in Enum.GetNames(rootType))
 					{
-						data.Add(Enum.GetName(rootType, v), v.ToString());
+						var value = (int)Enum.Parse(rootType, name);
+						data.Add(name, value);
 					}
+
 					input += InputDataList(myId, propDisplayInfo.CssClasses, labelText, propDisplayInfo.Placeholder, propDisplayInfo.Description, data, propDisplayInfo.DefaultValue?.ToString(), propDisplayInfo.IsDisabled);
 				}
 				else if (rootType.IsClass)
 				{
-					if (!NestedTypes.Add(rootType)) { input += null; continue; } //Circular reference, not allowed -> null
+					if (!NestedTypes.Add(rootType)) { input += "<span>Circular reference detected, not allowed.</span>";; continue; } //Circular reference, not allowed -> null
 					input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}\" aria-expanded=\"false\" aria-controls=\"collapse_{myId}\"><h4 class=\"panel-title\">{labelText}</h4></div><div id=\"collapse_{myId}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
 					input += InputProps(myId, rootType, innerDepth);
 					input += "</div></div></div>";
@@ -320,7 +374,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 
 			if (string.IsNullOrWhiteSpace(inputs))
 			{
-				inputs = "<span>This Nested Type does not require inputs</span>";
+				inputs = $"<span>No valid <strong>public</strong> properties with the <strong>[DisplayData]</strong> attribute were found in <strong>{parentType.Name}</strong>.</span>";
 			}
 
 			return inputs;
@@ -394,7 +448,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 
 		protected string InputNumberbox(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, object defaultValue = null, bool isDisabled = false, bool isRequired = false)
 		{
-			return Input(id, cssClasses, labelText, placeholderText, descriptionText, "number", defaultValue, isDisabled, isRequired);
+			return Input(id, cssClasses, labelText, placeholderText, descriptionText, "text", defaultValue, isDisabled, isRequired);
 		}
 
 		protected string InputDatebox(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, object defaultValue = null, bool isDisabled = false, bool isRequired = false, string controlConfig = "")
@@ -434,12 +488,12 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 </div>";
 		}
 
-		protected string InputDataList(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, Dictionary<string, string> data, string defaultValue = null, bool isDisabled = false)
+		protected string InputDataList(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, Dictionary<string, int> data, string defaultValue = null, bool isDisabled = false)
 		{
 			var initText = defaultValue != null ? defaultValue : !string.IsNullOrWhiteSpace(placeholderText) ? placeholderText : "Select a value";
 			var initValue = defaultValue != null && data.ContainsKey(defaultValue) ? data[defaultValue].ToString() : "";
 			var output = $@"
-<div class=""pb-1 {cssClasses}"">
+<div class=""form-group {cssClasses}"">
 	<label class=""control-label"">{labelText}</label>
 	<div class=""dropdown"">
 		<button id=""{id}"" class=""hdm-job-input hdm-input-datalist btn btn-default dropdown-toggle input-control-data-list"" type=""button"" data-selectedvalue=""{initValue}"" data-toggle=""dropdown"" aria-haspopup=""true"" aria-expanded=""false"" {(isDisabled ? "disabled='disabled'" : "")}>
@@ -465,20 +519,20 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 			return output;
 		}
 		
-        protected string InputImplsList(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, HashSet<Type> impls, string defaultValue = null, bool isDisabled = false)
+        protected string InputImplsList(string id, string cssClasses, string labelText, string placeholderText, string descriptionText, HashSet<Type> impls, Type defaultValue = null, bool isDisabled = false, bool isRequired = false)
         {
-			var initText = "Select a value";
-			var initValue = "";
+			var initText = placeholderText ?? "Select your own implementation";
+			var initValue = initText;
 
-			if (defaultValue != null && impls.Any(i => i.Name == defaultValue))
+			if (defaultValue != null && impls.Contains(defaultValue))
 			{
-				var initTextImpl = impls.First(i => i.Name == defaultValue);
-				initText = initTextImpl.Name;
-				initValue = initTextImpl.FullName;
+				var defaultType = impls.FirstOrDefault(impl => impl == defaultValue);
+				initValue = defaultType.FullName;
+				initText = defaultType.Name;
 			}
 
             var output = $@"
-            <div class= form-group ""{cssClasses}"">
+            <div class=""form-group {cssClasses} {(isRequired ? "required" : "")}"">
                 <label class=""control-label"">{labelText}</label>
                 <div class=""dropdown"">
                     <button id=""{id}"" class=""hdm-impl-selector-button hdm-job-input hdm-input-datalist btn btn-default dropdown-toggle input-control-data-list"" type=""button"" data-selectedvalue=""{initValue}"" data-toggle=""dropdown"" aria-haspopup=""true"" aria-expanded=""false"" {(isDisabled ? "disabled='disabled'" : "")}>

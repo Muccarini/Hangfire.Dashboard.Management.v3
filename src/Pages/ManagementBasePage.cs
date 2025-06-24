@@ -79,7 +79,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 
 						var variable = $"{id}_{parameterInfo.Name}";
 
-						if (rootType == typeof(DateTime))
+						if (rootType == typeof(DateTime) || rootType == typeof(DateTime?))
 						{
 							variable = $"{variable}_datetimepicker";
 						}
@@ -110,13 +110,25 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 						}
 						else if (rootType.IsInterface)
 						{
-							if (!VT.Implementations.ContainsKey(rootType)) { errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} is not a valid interface type or is not registered in VT."; break; }
-							VT.Implementations.TryGetValue(rootType, out HashSet<Type> impls);
+							if (!VT.Implementations.ContainsKey(rootType)) { errorMessage = $"{displayInfo.Label ?? parameterInfo.Name}: No concrete implementation of \"{rootType.Name}\" found in the current assembly."; break; }
+							var impls = VT.Implementations[rootType];
+
+							if (impls == null || impls.Count == 0)
+							{
+								errorMessage = $"No concrete implementation of \"{rootType.Name}\" found in the current assembly.";
+								break;
+							}
+
 							var impl = impls.FirstOrDefault(concrete => concrete.FullName == GetFormVariable($"{id}_{parameterInfo.Name}"));
 
 							if (impl == null)
 							{
-								errorMessage = $"{impl.FullName} is not a valid concrete type of {rootType} or is not registered in VT.";
+								if (displayInfo.IsRequired)
+								{
+									errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} is required.";
+									break;
+								}
+								errorMessage = $"Selected implementation: \"" + GetFormVariable($"{id}_{parameterInfo.Name}") + $"\"  for {displayInfo.Label ?? parameterInfo.Name} not found in VT";
 								break;
 							}
 
@@ -133,28 +145,72 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 								break;
 							}
 						}
-						else if (rootType == typeof(int))
+						else if (rootType == typeof(int) || rootType == typeof(int?))
 						{
-							int intNumber;
-							if (int.TryParse(formInput, out intNumber) == false)
-							{
-								errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} was not in a correct format.";
-								break;
-							}
+							int intNumber = 0;
 							item = intNumber;
+							if(int.TryParse(formInput, out intNumber) == true)
+							{
+								item = intNumber;
+							}
+							else
+							{
+								if (formInput != "")
+								{
+									errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} incorrect format";
+									break;
+								}
+								if (displayInfo.IsRequired)
+								{
+									errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} is required.";
+									break;
+								}
+								if (rootType == typeof(int?))
+								{
+									item = null;
+								}
+							}
 						}
-						else if (rootType == typeof(DateTime))
+						else if (rootType == typeof(DateTime) || rootType == typeof(DateTime?))
 						{
 							item = formInput == null ? DateTime.MinValue : DateTime.Parse(formInput, null, DateTimeStyles.RoundtripKind);
-							if (displayInfo.IsRequired && item.Equals(DateTime.MinValue))
+							if (item.Equals(DateTime.MinValue))
 							{
-								errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} is required.";
-								break;
+								if (displayInfo.IsRequired)
+								{
+									errorMessage = $"{displayInfo.Label ?? parameterInfo.Name} is required.";
+									break;
+								}
+								if (rootType == typeof(DateTime?))
+								{
+									item = null;
+								}
 							}
 						}
 						else if (rootType == typeof(bool))
 						{
 							item = formInput == "on";
+						}
+						else if (rootType.IsEnum || (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum))
+						{
+							try
+							{
+								if ((rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum))
+								{
+									var enumValue = Enum.Parse(rootType.GetGenericArguments()[0], formInput);
+									item = enumValue;
+								}
+								else
+								{
+									var enumValue = Enum.Parse(rootType, formInput);
+									item = enumValue;
+								}
+							}
+							catch
+							{
+								item = (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum) ?
+									null : GetDefaultEnumValue(rootType);
+							}
 						}
 						else if (rootType.IsClass)
 						{
@@ -193,101 +249,101 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 						switch (type)
 						{
 							case "CronExpression":
+								{
+									var manager = new RecurringJobManager(context.Storage);
+									var cron = GetFormVariable($"{id}_sys_cron");
+									var name = GetFormVariable($"{id}_sys_name");
+
+									if (string.IsNullOrWhiteSpace(cron))
 									{
-										var manager = new RecurringJobManager(context.Storage);
-										var cron = GetFormVariable($"{id}_sys_cron");
-										var name = GetFormVariable($"{id}_sys_name");
-
-										if (string.IsNullOrWhiteSpace(cron))
-										{
-											errorMessage = "No Cron Expression Defined";
-											break;
-										}
-										if (jobMetadata.AllowMultiple && string.IsNullOrWhiteSpace(name))
-										{
-											errorMessage = "No Job Name Defined";
-											break;
-										}
-
-										try
-										{
-											var jobId = jobMetadata.AllowMultiple ? name : jobMetadata.JobId;
-											manager.AddOrUpdate(jobId, job, cron, TimeZoneInfo.Local, jobMetadata.Queue);
-											jobLink = new UrlHelper(context).To("/recurring");
-										}
-										catch (Exception e)
-										{
-											errorMessage = e.Message;
-										}
+										errorMessage = "No Cron Expression Defined";
 										break;
 									}
+									if (jobMetadata.AllowMultiple && string.IsNullOrWhiteSpace(name))
+									{
+										errorMessage = "No Job Name Defined";
+										break;
+									}
+
+									try
+									{
+										var jobId = jobMetadata.AllowMultiple ? name : jobMetadata.JobId;
+										manager.AddOrUpdate(jobId, job, cron, TimeZoneInfo.Local, jobMetadata.Queue);
+										jobLink = new UrlHelper(context).To("/recurring");
+									}
+									catch (Exception e)
+									{
+										errorMessage = e.Message;
+									}
+									break;
+								}
 							case "ScheduleDateTime":
+								{
+									var datetime = GetFormVariable($"{id}_sys_datetime");
+
+									if (string.IsNullOrWhiteSpace(datetime))
 									{
-										var datetime = GetFormVariable($"{id}_sys_datetime");
-
-										if (string.IsNullOrWhiteSpace(datetime))
-										{
-											errorMessage = "No Schedule Defined";
-											break;
-										}
-
-										if (!DateTime.TryParse(datetime, null, DateTimeStyles.RoundtripKind, out DateTime dt))
-										{
-											errorMessage = "Unable to parse Schedule";
-											break;
-										}
-										try
-										{
-											var jobId = client.Create(job, new ScheduledState(dt.ToUniversalTime()));//Queue
-											jobLink = new UrlHelper(context).JobDetails(jobId);
-										}
-										catch (Exception e)
-										{
-											errorMessage = e.Message;
-										}
+										errorMessage = "No Schedule Defined";
 										break;
 									}
+
+									if (!DateTime.TryParse(datetime, null, DateTimeStyles.RoundtripKind, out DateTime dt))
+									{
+										errorMessage = "Unable to parse Schedule";
+										break;
+									}
+									try
+									{
+										var jobId = client.Create(job, new ScheduledState(dt.ToUniversalTime()));//Queue
+										jobLink = new UrlHelper(context).JobDetails(jobId);
+									}
+									catch (Exception e)
+									{
+										errorMessage = e.Message;
+									}
+									break;
+								}
 							case "ScheduleTimeSpan":
+								{
+									var timeSpan = GetFormVariable($"{id}_sys_timespan");
+
+									if (string.IsNullOrWhiteSpace(timeSpan))
 									{
-										var timeSpan = GetFormVariable($"{id}_sys_timespan");
-
-										if (string.IsNullOrWhiteSpace(timeSpan))
-										{
-											errorMessage = $"No Delay Defined '{id}'";
-											break;
-										}
-
-										if (!TimeSpan.TryParse(timeSpan, out TimeSpan dt))
-										{
-											errorMessage = "Unable to parse Delay";
-											break;
-										}
-
-										try
-										{
-											var jobId = client.Create(job, new ScheduledState(dt));//Queue
-											jobLink = new UrlHelper(context).JobDetails(jobId);
-										}
-										catch (Exception e)
-										{
-											errorMessage = e.Message;
-										}
+										errorMessage = $"No Delay Defined '{id}'";
 										break;
 									}
+
+									if (!TimeSpan.TryParse(timeSpan, out TimeSpan dt))
+									{
+										errorMessage = "Unable to parse Delay";
+										break;
+									}
+
+									try
+									{
+										var jobId = client.Create(job, new ScheduledState(dt));//Queue
+										jobLink = new UrlHelper(context).JobDetails(jobId);
+									}
+									catch (Exception e)
+									{
+										errorMessage = e.Message;
+									}
+									break;
+								}
 							case "Enqueue":
 							default:
+								{
+									try
 									{
-										try
-										{
-											var jobId = client.Create(job, new EnqueuedState(jobMetadata.Queue));
-											jobLink = new UrlHelper(context).JobDetails(jobId);
-										}
-										catch (Exception e)
-										{
-											errorMessage = e.Message;
-										}
-										break;
+										var jobId = client.Create(job, new EnqueuedState(jobMetadata.Queue));
+										jobLink = new UrlHelper(context).JobDetails(jobId);
 									}
+									catch (Exception e)
+									{
+										errorMessage = e.Message;
+									}
+									break;
+								}
 						}
 					}
 
@@ -300,43 +356,75 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 					}
 					context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
 					context.Response.WriteAsync(JsonConvert.SerializeObject(new { errorMessage }));
-					
+
 					return false;
 				}));
 			}
 		}
 
-
 		private static object ProcessType(string parentId, Type parentType, Func<string, string> getFormVariable, HashSet<Type> nestedTypes, out string errorMessage)
 		{
 			errorMessage = null;
 
-			if (parentType == typeof(DateTime))
+			if (parentType == typeof(DateTime) || parentType == typeof(DateTime?))
 			{
 				parentId = $"{parentId}_datetimepicker";
 			}
 
 			if (parentType == typeof(string))
-				return getFormVariable(parentId);
-			else if (parentType == typeof(int))
 			{
-				var res = int.TryParse(getFormVariable(parentId), out var n) ? n : (int?)null;
-				if (res.HasValue) { return res; } else { return errorMessage = $"{parentId} was not in a correct format."; }
+				return getFormVariable(parentId);	
 			}
-			else if (parentType == typeof(DateTime))
-				return getFormVariable(parentId) == null ? DateTime.MinValue : DateTime.Parse(getFormVariable(parentId), null, DateTimeStyles.RoundtripKind);
+			else if (parentType == typeof(int) || parentType == typeof(int?))
+			{
+				int intNumber;
+				if (int.TryParse(getFormVariable(parentId), out intNumber) == false)
+				{
+					if (getFormVariable(parentId) != "")
+					{
+						errorMessage = $"{parentId} incorrect format";
+						return null;
+					}
+					if (parentType == typeof(int?))
+					{
+						return null;
+					}
+				}
+				return intNumber;
+			}
+			else if (parentType == typeof(DateTime) || parentType == typeof(DateTime?))
+			{
+				var val = getFormVariable(parentId) == null ? DateTime.MinValue : DateTime.Parse(getFormVariable(parentId), null, DateTimeStyles.RoundtripKind);
+				if (val.Equals(DateTime.MinValue))
+				{
+					if (parentType == typeof(DateTime?))
+					{
+						return null;
+					}
+				}
+			}
+			else if (parentType.IsEnum || (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>) && parentType.GetGenericArguments()[0].IsEnum))
+			{
+				try
+				{
+					var enumValue = Enum.Parse(parentType, getFormVariable(parentId));
+					return enumValue;
+				}
+				catch
+				{
+					return (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>)) ?
+						null : GetDefaultEnumValue(parentType);
+				}
+			}
 			else if (parentType == typeof(bool))
+			{
 				return getFormVariable(parentId) == "on";
+			}
 
-			if (!string.IsNullOrEmpty(errorMessage)) return null;
-
-			// Check if parameter is a generic type and is a enumerable
 			if (parentType.IsGenericType && (parentType.GetGenericTypeDefinition() == typeof(List<>)))
 			{
 				var elementType = parentType.GetGenericArguments()[0];
 				var list = Activator.CreateInstance(typeof(List<>).MakeGenericType(elementType));
-
-				//example: Expedited_Expedited_Job1_listofString = "0"
 
 				if (int.TryParse(getFormVariable($"{parentId}"), out int count))
 				{
@@ -378,20 +466,6 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 				return nestedInstance;
 			}
 
-			if (parentType.IsEnum)
-			{
-				try
-				{
-					var enumValue = Enum.Parse(parentType, getFormVariable(parentId));
-					return enumValue;
-				}
-				catch (Exception e)
-				{
-					errorMessage = $"{parentId} was not in a correct format: {e.Message}";
-					return null;
-				}
-			}
-
 			if (parentType.IsClass)
 			{
 				var instance = Activator.CreateInstance(parentType);
@@ -405,7 +479,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 				{
 					string propId = $"{parentId}_{propertyInfo.Name}";
 
-					if (propertyInfo.PropertyType == typeof(DateTime))
+					if (propertyInfo.PropertyType == typeof(DateTime) || propertyInfo.PropertyType == typeof(DateTime?))
 					{
 						propId = $"{propId}_datetimepicker";
 					}
@@ -462,43 +536,75 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 							break;
 						}
 					}
-					else if (propertyInfo.PropertyType == typeof(int))
+					else if (propertyInfo.PropertyType == typeof(int) || propertyInfo.PropertyType == typeof(int?))
 					{
-						if (int.TryParse(formInput, out int intValue))
+						int intValue = 0;
+						if (int.TryParse(formInput, out intValue))
 						{
 							propertyInfo.SetValue(instance, intValue);
 						}
 						else
 						{
-							errorMessage = $"{propLabel} was not in a correct format.";
-							break;
+							if (formInput != "")
+							{
+								errorMessage = $"{propLabel} incorrect format";
+								break;
+							}
+							if (propDisplayInfo.IsRequired)
+							{
+								errorMessage = $"{propLabel} is required.";
+								break;
+							}
+							if (propertyInfo.PropertyType == typeof(int?))
+							{
+								propertyInfo.SetValue(instance, null);
+								continue;
+							}
 						}
+
+						propertyInfo.SetValue(instance, intValue);
 					}
-					else if (propertyInfo.PropertyType == typeof(DateTime))
+					else if (propertyInfo.PropertyType == typeof(DateTime) || propertyInfo.PropertyType == typeof(DateTime?))
 					{
-						var dateTimeValue = formInput == null ? DateTime.MinValue : DateTime.Parse(formInput, null, DateTimeStyles.RoundtripKind);
-						propertyInfo.SetValue(instance, dateTimeValue);
-						if (propDisplayInfo.IsRequired && dateTimeValue.Equals(DateTime.MinValue))
+						var dateTimeValue = string.IsNullOrEmpty(formInput) ? DateTime.MinValue : DateTime.Parse(formInput, null, DateTimeStyles.RoundtripKind);
+
+						if(dateTimeValue.Equals(DateTime.MinValue))
 						{
-							errorMessage = $"{propLabel} is required.";
-							break;
+							if (propDisplayInfo.IsRequired)
+							{
+								errorMessage = $"{propLabel} is required.";
+								break;
+							}
+							if (propertyInfo.PropertyType == typeof(DateTime?))
+							{
+								propertyInfo.SetValue(instance, null);
+								continue;
+							}
 						}
+						propertyInfo.SetValue(instance, dateTimeValue);
 					}
 					else if (propertyInfo.PropertyType == typeof(bool))
 					{
 						propertyInfo.SetValue(instance, formInput == "on");
 					}
-					else if (propertyInfo.PropertyType.IsEnum)
+					else if (propertyInfo.PropertyType.IsEnum || (propertyInfo.PropertyType.IsGenericType && propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsEnum))
 					{
 						try
 						{
 							var enumValue = Enum.Parse(propertyInfo.PropertyType, formInput);
 							propertyInfo.SetValue(instance, enumValue);
 						}
-						catch (Exception e)
+						catch
 						{
-							errorMessage = $"{propLabel} was not in a correct format: {e.Message}";
-							break;
+							if (propDisplayInfo.IsRequired)
+							{
+								errorMessage = $"{propLabel} is required.";
+								break;
+							}
+							var value = (propertyInfo.PropertyType.IsGenericType && propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsEnum) ?
+									null : GetDefaultEnumValue(propertyInfo.PropertyType);
+
+							propertyInfo.SetValue(instance, value);
 						}
 					}
 					else if (propertyInfo.PropertyType.IsClass)
@@ -536,6 +642,29 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 
 			errorMessage = $"Unable to process type {parentType.Name} for {parentId}";
 			return null;
+		}
+
+		/// <summary>
+		/// Enums doesn't have a default value, this method it returns the first value of the enum.
+		/// The first value of an enum is the lowest positive integer (or the negative integer with the greatest absolute value less than zero), which is usually 0.
+		/// so if you have overridden the values of the enum it may not return the expected value.
+		/// if enum has duplicated values, is not guaranteed to return the first defined value.
+		/// https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1069
+		/// </summary>
+		/// <param name="enumType"></param>
+		/// <returns></returns>
+		/// <exception cref="ArgumentException"></exception>
+		public static object GetDefaultEnumValue(Type enumType)
+		{
+			if (!enumType.IsEnum)
+				throw new ArgumentException("Type must be an enum.");
+
+			//rare case where the enum has no defined values.
+			var names = Enum.GetNames(enumType);
+			if (names.Length == 0)
+				throw new InvalidOperationException("Enum type has no defined keys.");
+
+			return Enum.GetValues(enumType).GetValue(0);
 		}
 	}
 }
