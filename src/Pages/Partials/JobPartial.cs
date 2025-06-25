@@ -333,7 +333,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages.Partials
 				}
 				else if (rootType.IsClass)
 				{
-					if (!NestedTypes.Add(rootType)) { input += "<span>Circular reference detected, not allowed.</span>";; continue; } //Circular reference, not allowed -> null
+					if (!NestedTypes.Add(rootType)) { input += "<span>Circular reference detected, not allowed.</span>"; continue; } //Circular reference, not allowed -> null
 					input += $"<div class=\"panel panel-default\"><div class=\"panel-heading\" role=\"button\" data-toggle=\"collapse\" href=\"#collapse_{myId}\" aria-expanded=\"false\" aria-controls=\"collapse_{myId}\"><h4 class=\"panel-title\">{labelText}</h4></div><div id=\"collapse_{myId}\" class=\"panel-collapse collapse\"><div class=\"panel-body\">";
 					input += InputProps(myId, rootType, innerDepth);
 					input += "</div></div></div>";

@@ -149,7 +149,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 						{
 							int intNumber = 0;
 							item = intNumber;
-							if(int.TryParse(formInput, out intNumber) == true)
+							if (int.TryParse(formInput, out intNumber) == true)
 							{
 								item = intNumber;
 							}
@@ -192,31 +192,37 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 							item = formInput == "on";
 						}
 						else if (rootType.IsEnum || (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum))
-						{
+						{							
+							Type el = null;
+
 							try
 							{
-								if ((rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum))
+								el = rootType;
+
+								if ((rootType.IsGenericType && el.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum))
 								{
-									var enumValue = Enum.Parse(rootType.GetGenericArguments()[0], formInput);
-									item = enumValue;
+									el = rootType.GetGenericArguments()[0];
 								}
-								else
-								{
-									var enumValue = Enum.Parse(rootType, formInput);
-									item = enumValue;
-								}
+
+								item = Enum.Parse(el, formInput);
 							}
 							catch
 							{
 								item = (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsEnum) ?
-									null : GetDefaultEnumValue(rootType);
+									null : GetDefaultEnumValue(el);
 							}
 						}
-						else if (rootType.IsClass)
+						else if (rootType.IsClass || rootType.IsClass || (rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsClass))
 						{
-							nestedTypes.Add(rootType);
-							item = ProcessType(variable, rootType, GetFormVariable, nestedTypes, out errorMessage);
-							nestedTypes.Remove(rootType);
+							Type typeToProcess = rootType;
+							if ((rootType.IsGenericType && rootType.GetGenericTypeDefinition() == typeof(Nullable<>) && rootType.GetGenericArguments()[0].IsClass))
+							{
+								typeToProcess = rootType.GetGenericArguments()[0];
+							}
+
+							nestedTypes.Add(typeToProcess);
+							item = ProcessType(variable, typeToProcess, GetFormVariable, nestedTypes, out errorMessage);
+							nestedTypes.Remove(typeToProcess);
 						}
 						else if (!rootType.IsValueType)
 						{
@@ -244,6 +250,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 
 					if (errorMessage == null)
 					{
+						var array = par.ToArray();
 						var job = new Job(jobMetadata.Type, jobMetadata.MethodInfo, par.ToArray());
 						var client = new BackgroundJobClient(context.Storage);
 						switch (type)
@@ -402,18 +409,28 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 						return null;
 					}
 				}
+
+				return val;
 			}
 			else if (parentType.IsEnum || (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>) && parentType.GetGenericArguments()[0].IsEnum))
 			{
+				Type el = null;
+
 				try
 				{
-					var enumValue = Enum.Parse(parentType, getFormVariable(parentId));
-					return enumValue;
+					el = parentType;
+
+					if ((parentType.IsGenericType && el.GetGenericTypeDefinition() == typeof(Nullable<>) && parentType.GetGenericArguments()[0].IsEnum))
+					{
+						el = parentType.GetGenericArguments()[0];
+					}
+
+					return Enum.Parse(el, getFormVariable(parentId));
 				}
 				catch
 				{
-					return (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>)) ?
-						null : GetDefaultEnumValue(parentType);
+					return (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>) && parentType.GetGenericArguments()[0].IsEnum) ?
+						null : GetDefaultEnumValue(el);
 				}
 			}
 			else if (parentType == typeof(bool))
@@ -466,9 +483,15 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 				return nestedInstance;
 			}
 
-			if (parentType.IsClass)
+			if (parentType.IsClass || (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>) && parentType.GetGenericArguments()[0].IsClass))
 			{
-				var instance = Activator.CreateInstance(parentType);
+				Type typeToProcess = parentType;
+				if (parentType.IsGenericType && parentType.GetGenericTypeDefinition() == typeof(Nullable<>) && parentType.GetGenericArguments()[0].IsClass)
+				{
+					typeToProcess = parentType.GetGenericArguments()[0];
+				}
+
+				var instance = Activator.CreateInstance(typeToProcess);
 				if (instance == null)
 				{
 					errorMessage = $"Unable to create instance of {parentType.Name}";
@@ -568,7 +591,7 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 					{
 						var dateTimeValue = string.IsNullOrEmpty(formInput) ? DateTime.MinValue : DateTime.Parse(formInput, null, DateTimeStyles.RoundtripKind);
 
-						if(dateTimeValue.Equals(DateTime.MinValue))
+						if (dateTimeValue.Equals(DateTime.MinValue))
 						{
 							if (propDisplayInfo.IsRequired)
 							{
@@ -588,30 +611,38 @@ namespace Hangfire.Dashboard.Management.v3.Pages
 						propertyInfo.SetValue(instance, formInput == "on");
 					}
 					else if (propertyInfo.PropertyType.IsEnum || (propertyInfo.PropertyType.IsGenericType && propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsEnum))
-					{
+					{						
+						Type el = null;
+
 						try
 						{
-							var enumValue = Enum.Parse(propertyInfo.PropertyType, formInput);
-							propertyInfo.SetValue(instance, enumValue);
+							el = propertyInfo.PropertyType;
+
+							if ((propertyInfo.PropertyType.IsGenericType && el.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsEnum))
+							{
+								el = propertyInfo.PropertyType.GetGenericArguments()[0];
+							}
+
+							propertyInfo.SetValue(instance, Enum.Parse(el, getFormVariable(parentId)));
 						}
 						catch
 						{
-							if (propDisplayInfo.IsRequired)
-							{
-								errorMessage = $"{propLabel} is required.";
-								break;
-							}
 							var value = (propertyInfo.PropertyType.IsGenericType && propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsEnum) ?
-									null : GetDefaultEnumValue(propertyInfo.PropertyType);
+								null : GetDefaultEnumValue(el);
 
 							propertyInfo.SetValue(instance, value);
 						}
 					}
-					else if (propertyInfo.PropertyType.IsClass)
+					else if (propertyInfo.PropertyType.IsClass || (propertyInfo.PropertyType.IsGenericType && propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsClass))
 					{
-						if (!nestedTypes.Add(propertyInfo.PropertyType)) { continue; } //Circular reference, not allowed
-						var nestedInstance = ProcessType(propId, propertyInfo.PropertyType, getFormVariable, nestedTypes, out errorMessage);
-						nestedTypes.Remove(propertyInfo.PropertyType);
+						Type innerType = propertyInfo.PropertyType;
+						if ((propertyInfo.PropertyType.IsGenericType && propertyInfo.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>) && propertyInfo.PropertyType.GetGenericArguments()[0].IsClass))
+						{
+							innerType = propertyInfo.PropertyType.GetGenericArguments()[0];
+						}
+						if (!nestedTypes.Add(innerType)) { continue; } //Circular reference, not allowed
+						var nestedInstance = ProcessType(propId, innerType, getFormVariable, nestedTypes, out errorMessage);
+						nestedTypes.Remove(innerType);
 
 						propertyInfo.SetValue(instance, nestedInstance);
 					}
